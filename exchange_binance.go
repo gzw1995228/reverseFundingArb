@@ -5,16 +5,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 type BinanceExchange struct {
-	client *http.Client
+	client            *http.Client
+	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	mu                sync.RWMutex
 }
 
 func NewBinanceExchange() *BinanceExchange {
 	return &BinanceExchange{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client:           &http.Client{Timeout: 10 * time.Second},
+		fundingIntervals: make(map[string]float64),
 	}
 }
 
@@ -23,8 +27,54 @@ func (b *BinanceExchange) Name() string {
 }
 
 func (b *BinanceExchange) Initialize() error {
-	// 币安资金费率每8小时结算一次
 	return nil
+}
+
+func (b *BinanceExchange) UpdateFundingIntervals() error {
+	url := "https://fapi.binance.com/fapi/v1/fundingInfo"
+	
+	resp, err := b.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var fundingInfos []struct {
+		Symbol                   string `json:"symbol"`
+		AdjustedFundingRateCap   string `json:"adjustedFundingRateCap"`
+		AdjustedFundingRateFloor string `json:"adjustedFundingRateFloor"`
+		FundingIntervalHours     int    `json:"fundingIntervalHours"`
+	}
+
+	if err := json.Unmarshal(body, &fundingInfos); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	
+	for _, info := range fundingInfos {
+		if info.FundingIntervalHours > 0 {
+			b.fundingIntervals[info.Symbol] = float64(info.FundingIntervalHours)
+		}
+	}
+
+	return nil
+}
+
+func (b *BinanceExchange) getFundingInterval(symbol string) float64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	if interval, ok := b.fundingIntervals[symbol]; ok {
+		return interval
+	}
+	return 8.0 // 默认8小时
 }
 
 func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -63,14 +113,19 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 
 		price := parseFloat(item.MarkPrice)
 		fundingRate := parseFloat(item.LastFundingRate)
+		intervalHour := b.getFundingInterval(item.Symbol)
 
 		if price > 0 {
+			// 转换为4小时费率
+			fundingRate4h := fundingRate * (4.0 / intervalHour)
+			
 			result[item.Symbol] = &ContractData{
-				Symbol:          item.Symbol,
-				Price:           price,
-				FundingRate:     fundingRate,
-				FundingInterval: "8h",
-				NextFundingTime: item.NextFundingTime,
+				Symbol:              item.Symbol,
+				Price:               price,
+				FundingRate:         fundingRate,
+				FundingIntervalHour: intervalHour,
+				FundingRate4h:       fundingRate4h,
+				NextFundingTime:     item.NextFundingTime,
 			}
 		}
 	}

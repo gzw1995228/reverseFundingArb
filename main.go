@@ -13,7 +13,7 @@ func main() {
 		log.Println("警告: 未配置WECHAT_WEBHOOK环境变量，将无法发送微信通知")
 	}
 
-	monitor := NewMonitor(webhookURL, 0.004) // 0.4% 阈值
+	monitor := NewMonitor(webhookURL, 0) // 阈值由周期动态决定
 
 	// 首次获取所有交易所的资金费率结算周期信息
 	log.Println("正在初始化，获取所有交易所的资金费率结算周期...")
@@ -24,13 +24,23 @@ func main() {
 	log.Println("初始化完成，开始监控...")
 	
 	// 每10秒获取一次数据并分析
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
+	dataTicker := time.NewTicker(10 * time.Second)
+	defer dataTicker.Stop()
+
+	// 每小时更新一次资金费率结算周期
+	intervalTicker := time.NewTicker(1 * time.Hour)
+	defer intervalTicker.Stop()
 
 	// 立即执行一次
 	monitor.CheckArbitrageOpportunities()
 
-	for range ticker.C {
-		monitor.CheckArbitrageOpportunities()
+	for {
+		select {
+		case <-dataTicker.C:
+			monitor.CheckArbitrageOpportunities()
+		case <-intervalTicker.C:
+			log.Println("更新资金费率结算周期...")
+			monitor.UpdateFundingIntervals()
+		}
 	}
 }

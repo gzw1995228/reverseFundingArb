@@ -5,16 +5,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 type MEXCExchange struct {
-	client *http.Client
+	client            *http.Client
+	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	mu                sync.RWMutex
 }
 
 func NewMEXCExchange() *MEXCExchange {
 	return &MEXCExchange{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client:           &http.Client{Timeout: 10 * time.Second},
+		fundingIntervals: make(map[string]float64),
 	}
 }
 
@@ -23,8 +27,67 @@ func (m *MEXCExchange) Name() string {
 }
 
 func (m *MEXCExchange) Initialize() error {
-	// MEXC资金费率每8小时结算一次
 	return nil
+}
+
+func (m *MEXCExchange) UpdateFundingIntervals() error {
+	// MEXC的资金费率接口包含collectCycle字段
+	url := "https://contract.mexc.com/api/v1/contract/funding_rate"
+	
+	resp, err := m.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		Success bool `json:"success"`
+		Code    int  `json:"code"`
+		Data    []struct {
+			Symbol       string  `json:"symbol"`
+			FundingRate  float64 `json:"fundingRate"`
+			CollectCycle int     `json:"collectCycle"` // 单位：小时
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if !response.Success {
+		return fmt.Errorf("API返回错误，code: %d", response.Code)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, item := range response.Data {
+		if item.CollectCycle > 0 {
+			// 转换symbol格式
+			symbol := item.Symbol
+			if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+				symbol = symbol[:len(symbol)-5] + "USDT"
+			}
+			m.fundingIntervals[symbol] = float64(item.CollectCycle)
+		}
+	}
+
+	return nil
+}
+
+func (m *MEXCExchange) getFundingInterval(symbol string) float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	if interval, ok := m.fundingIntervals[symbol]; ok {
+		return interval
+	}
+	return 8.0 // 默认8小时
 }
 
 func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -48,6 +111,7 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Data    []struct {
 			Symbol       string  `json:"symbol"`
 			FundingRate  float64 `json:"fundingRate"`
+			CollectCycle int     `json:"collectCycle"` // 单位：小时
 		} `json:"data"`
 	}
 
@@ -113,12 +177,26 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			symbol = symbol[:len(symbol)-5] + "USDT"
 		}
 
+		intervalHour := float64(item.CollectCycle)
+		if intervalHour == 0 {
+			intervalHour = m.getFundingInterval(symbol)
+		} else {
+			// 更新缓存
+			m.mu.Lock()
+			m.fundingIntervals[symbol] = intervalHour
+			m.mu.Unlock()
+		}
+
+		// 转换为4小时费率
+		fundingRate4h := item.FundingRate * (4.0 / intervalHour)
+
 		result[symbol] = &ContractData{
-			Symbol:          symbol,
-			Price:           price,
-			FundingRate:     item.FundingRate,
-			FundingInterval: "8h",
-			NextFundingTime: 0, // MEXC API可能不提供
+			Symbol:              symbol,
+			Price:               price,
+			FundingRate:         item.FundingRate,
+			FundingIntervalHour: intervalHour,
+			FundingRate4h:       fundingRate4h,
+			NextFundingTime:     0,
 		}
 	}
 

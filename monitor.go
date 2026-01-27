@@ -26,6 +26,7 @@ func NewMonitor(webhookURL string, threshold float64) *Monitor {
 			NewBybitExchange(),
 			NewMEXCExchange(),
 			NewBitgetExchange(),
+			NewGateExchange(),
 		},
 	}
 }
@@ -40,6 +41,8 @@ func (m *Monitor) InitializeExchanges() error {
 			defer wg.Done()
 			if err := ex.Initialize(); err != nil {
 				errChan <- fmt.Errorf("%s 初始化失败: %v", ex.Name(), err)
+			} else if err := ex.UpdateFundingIntervals(); err != nil {
+				errChan <- fmt.Errorf("%s 更新结算周期失败: %v", ex.Name(), err)
 			} else {
 				log.Printf("%s 初始化成功", ex.Name())
 			}
@@ -54,6 +57,22 @@ func (m *Monitor) InitializeExchanges() error {
 	}
 
 	return nil
+}
+
+func (m *Monitor) UpdateFundingIntervals() {
+	var wg sync.WaitGroup
+	for _, exchange := range m.exchanges {
+		wg.Add(1)
+		go func(ex Exchange) {
+			defer wg.Done()
+			if err := ex.UpdateFundingIntervals(); err != nil {
+				log.Printf("%s 更新结算周期失败: %v", ex.Name(), err)
+			} else {
+				log.Printf("%s 结算周期更新成功", ex.Name())
+			}
+		}(exchange)
+	}
+	wg.Wait()
 }
 
 func (m *Monitor) CheckArbitrageOpportunities() {
@@ -124,59 +143,45 @@ func (m *Monitor) analyzeArbitrage(exchangeData map[string]map[string]*ContractD
 			continue
 		}
 
-		// 找出最高和最低资金费率
-		var rates []struct {
-			exchange string
-			rate     float64
-			price    float64
+		// 收集有效的交易所数据
+		var exchangeList []struct {
+			name     string
 			contract *ContractData
 		}
 
 		for exName, contract := range exchanges {
-			if contract.Price <= 0 || math.IsNaN(contract.FundingRate) {
+			if contract.Price <= 0 || math.IsNaN(contract.FundingRate) || contract.NextFundingTime <= 0 {
 				continue
 			}
-			rates = append(rates, struct {
-				exchange string
-				rate     float64
-				price    float64
+			exchangeList = append(exchangeList, struct {
+				name     string
 				contract *ContractData
-			}{exName, contract.FundingRate, contract.Price, contract})
+			}{exName, contract})
 		}
 
-		if len(rates) < 2 {
+		if len(exchangeList) < 2 {
 			continue
 		}
 
-		// 按资金费率排序
-		sort.Slice(rates, func(i, j int) bool {
-			return rates[i].rate < rates[j].rate
+		// 收集所有不同的下次结算时间戳并排序
+		fundingTimestamps := make(map[int64]bool)
+		for _, ex := range exchangeList {
+			fundingTimestamps[ex.contract.NextFundingTime] = true
+		}
+
+		// 转换为切片并排序（从小到大）
+		var timestamps []int64
+		for ts := range fundingTimestamps {
+			timestamps = append(timestamps, ts)
+		}
+		sort.Slice(timestamps, func(i, j int) bool {
+			return timestamps[i] < timestamps[j]
 		})
 
-		lowRate := rates[0]
-		highRate := rates[len(rates)-1]
-
-		// 计算价差比
-		priceSpread := (lowRate.price - highRate.price) / highRate.price
-
-		// 计算净收益
-		netProfit := (highRate.rate - lowRate.rate) - priceSpread
-
-		if netProfit > m.threshold {
-			opportunities = append(opportunities, ArbitrageOpportunity{
-				Symbol:           symbol,
-				HighRateExchange: highRate.exchange,
-				LowRateExchange:  lowRate.exchange,
-				HighRate:         highRate.rate,
-				LowRate:          lowRate.rate,
-				HighPrice:        highRate.price,
-				LowPrice:         lowRate.price,
-				PriceSpread:      priceSpread,
-				NetProfit:        netProfit,
-				HighRatePeriod:   highRate.contract.FundingInterval,
-				LowRatePeriod:    lowRate.contract.FundingInterval,
-				Timestamp:        time.Now(),
-			})
+		// 对每个时间戳分析套利机会
+		for _, targetTimestamp := range timestamps {
+			opps := m.analyzeAtTimestamp(symbol, exchangeList, targetTimestamp, timestamps)
+			opportunities = append(opportunities, opps...)
 		}
 	}
 
@@ -186,6 +191,126 @@ func (m *Monitor) analyzeArbitrage(exchangeData map[string]map[string]*ContractD
 	})
 
 	return opportunities
+}
+
+// analyzeAtTimestamp 分析在特定时间戳的套利机会
+func (m *Monitor) analyzeAtTimestamp(symbol string, exchangeList []struct {
+	name     string
+	contract *ContractData
+}, targetTimestamp int64, allTimestamps []int64) []ArbitrageOpportunity {
+	
+	var opportunities []ArbitrageOpportunity
+	currentTime := time.Now().Unix() * 1000 // 转换为毫秒
+
+	// 计算到目标时间戳的时间差（小时）
+	timeToTarget := float64(targetTimestamp-currentTime) / (1000.0 * 3600.0)
+	if timeToTarget <= 0 {
+		return opportunities // 时间戳已过期
+	}
+
+	// 为每个交易所计算在目标时间戳时的累计费率
+	type ExchangeRate struct {
+		name              string
+		price             float64
+		originalRate      float64
+		accumulatedRate   float64 // 到目标时间的累计费率
+		nextFundingTime   int64
+		fundingInterval   float64
+		settlementsCount  int // 结算次数
+	}
+
+	var rates []ExchangeRate
+
+	for _, ex := range exchangeList {
+		accumulatedRate := 0.0
+		settlementsCount := 0
+
+		if ex.contract.NextFundingTime <= targetTimestamp {
+			// 该交易所会在目标时间前结算
+			// 计算从现在到目标时间会结算几次
+			intervalMs := ex.contract.FundingIntervalHour * 3600.0 * 1000.0
+			
+			// 计算结算次数
+			if intervalMs > 0 {
+				// 从下次结算时间到目标时间的时间差
+				timeDiff := float64(targetTimestamp - ex.contract.NextFundingTime)
+				settlementsCount = 1 + int(timeDiff/intervalMs) // 至少结算一次
+				
+				// 累计费率 = 单次费率 × 结算次数
+				accumulatedRate = ex.contract.FundingRate * float64(settlementsCount)
+			}
+		} else {
+			// 该交易所在目标时间前不会结算，费率为0
+			accumulatedRate = 0.0
+			settlementsCount = 0
+		}
+
+		rates = append(rates, ExchangeRate{
+			name:             ex.name,
+			price:            ex.contract.Price,
+			originalRate:     ex.contract.FundingRate,
+			accumulatedRate:  accumulatedRate,
+			nextFundingTime:  ex.contract.NextFundingTime,
+			fundingInterval:  ex.contract.FundingIntervalHour,
+			settlementsCount: settlementsCount,
+		})
+	}
+
+	// 找出最高和最低累计费率
+	if len(rates) < 2 {
+		return opportunities
+	}
+
+	// 按累计费率排序
+	sort.Slice(rates, func(i, j int) bool {
+		return rates[i].accumulatedRate < rates[j].accumulatedRate
+	})
+
+	lowRate := rates[0]
+	highRate := rates[len(rates)-1]
+
+	// 计算价差比
+	priceSpread := (lowRate.price - highRate.price) / highRate.price
+
+	// 计算净收益
+	netProfit := (highRate.accumulatedRate - lowRate.accumulatedRate) - priceSpread
+
+	// 统一阈值 0.4%
+	threshold := 0.004
+
+	if netProfit > threshold {
+		// 格式化目标时间
+		targetTime := time.Unix(targetTimestamp/1000, 0)
+		
+		opportunities = append(opportunities, ArbitrageOpportunity{
+			Symbol:              symbol,
+			HighRateExchange:    highRate.name,
+			LowRateExchange:     lowRate.name,
+			HighRate:            highRate.originalRate,
+			LowRate:             lowRate.originalRate,
+			HighPrice:           highRate.price,
+			LowPrice:            lowRate.price,
+			PriceSpread:         priceSpread,
+			NetProfit:           netProfit,
+			HighRateIntervalH:   highRate.fundingInterval,
+			LowRateIntervalH:    lowRate.fundingInterval,
+			TargetTimestamp:     targetTimestamp,
+			TargetTime:          targetTime,
+			TimeToTarget:        timeToTarget,
+			HighAccumulatedRate: highRate.accumulatedRate,
+			LowAccumulatedRate:  lowRate.accumulatedRate,
+			HighSettlements:     highRate.settlementsCount,
+			LowSettlements:      lowRate.settlementsCount,
+			Timestamp:           time.Now(),
+		})
+	}
+
+	return opportunities
+}
+
+// getThresholdByInterval 统一阈值为0.4%
+func (m *Monitor) getThresholdByInterval(interval float64) float64 {
+	return 0.004 // 0.4%
 }
 
 func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
@@ -204,10 +329,30 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 	
 	for i := 0; i < count; i++ {
 		opp := opportunities[i]
+		
 		message += fmt.Sprintf("【%s】\n", opp.Symbol)
-		message += fmt.Sprintf("净收益: %.4f%% (阈值: %.2f%%)\n", opp.NetProfit*100, m.threshold*100)
-		message += fmt.Sprintf("高费率: %s %.4f%% (%s)\n", opp.HighRateExchange, opp.HighRate*100, opp.HighRatePeriod)
-		message += fmt.Sprintf("低费率: %s %.4f%% (%s)\n", opp.LowRateExchange, opp.LowRate*100, opp.LowRatePeriod)
+		message += fmt.Sprintf("目标时间: %s (%.2f小时后)\n", 
+			opp.TargetTime.Format("01-02 15:04"), opp.TimeToTarget)
+		message += fmt.Sprintf("净收益: %.4f%% (阈值: 0.40%%)\n", opp.NetProfit*100)
+		
+		// 高费率方
+		if opp.HighSettlements > 0 {
+			message += fmt.Sprintf("高费率: %s %.4f%% × %d次 = %.4f%%\n", 
+				opp.HighRateExchange, opp.HighRate*100, 
+				opp.HighSettlements, opp.HighAccumulatedRate*100)
+		} else {
+			message += fmt.Sprintf("高费率: %s 0%% (未结算)\n", opp.HighRateExchange)
+		}
+		
+		// 低费率方
+		if opp.LowSettlements > 0 {
+			message += fmt.Sprintf("低费率: %s %.4f%% × %d次 = %.4f%%\n", 
+				opp.LowRateExchange, opp.LowRate*100, 
+				opp.LowSettlements, opp.LowAccumulatedRate*100)
+		} else {
+			message += fmt.Sprintf("低费率: %s 0%% (未结算)\n", opp.LowRateExchange)
+		}
+		
 		message += fmt.Sprintf("价差比: %.4f%%\n", opp.PriceSpread*100)
 		message += fmt.Sprintf("价格: %.4f / %.4f\n", opp.HighPrice, opp.LowPrice)
 		message += "\n"
@@ -221,16 +366,23 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 }
 
 type ArbitrageOpportunity struct {
-	Symbol           string
-	HighRateExchange string
-	LowRateExchange  string
-	HighRate         float64
-	LowRate          float64
-	HighPrice        float64
-	LowPrice         float64
-	PriceSpread      float64
-	NetProfit        float64
-	HighRatePeriod   string
-	LowRatePeriod    string
-	Timestamp        time.Time
+	Symbol              string
+	HighRateExchange    string
+	LowRateExchange     string
+	HighRate            float64   // 原始费率
+	LowRate             float64   // 原始费率
+	HighPrice           float64
+	LowPrice            float64
+	PriceSpread         float64
+	NetProfit           float64
+	HighRateIntervalH   float64   // 结算周期（小时）
+	LowRateIntervalH    float64   // 结算周期（小时）
+	TargetTimestamp     int64     // 目标结算时间戳（毫秒）
+	TargetTime          time.Time // 目标结算时间
+	TimeToTarget        float64   // 距离目标时间（小时）
+	HighAccumulatedRate float64   // 高费率方累计费率
+	LowAccumulatedRate  float64   // 低费率方累计费率
+	HighSettlements     int       // 高费率方结算次数
+	LowSettlements      int       // 低费率方结算次数
+	Timestamp           time.Time
 }

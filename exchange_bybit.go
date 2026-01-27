@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
 type BybitExchange struct {
 	client *http.Client
+	mu     sync.RWMutex
 }
 
 func NewBybitExchange() *BybitExchange {
@@ -23,7 +25,11 @@ func (b *BybitExchange) Name() string {
 }
 
 func (b *BybitExchange) Initialize() error {
-	// Bybit资金费率每8小时结算一次
+	return nil
+}
+
+func (b *BybitExchange) UpdateFundingIntervals() error {
+	// Bybit的资金费率周期在ticker接口中返回
 	return nil
 }
 
@@ -51,6 +57,7 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 				MarkPrice            string `json:"markPrice"`
 				FundingRate          string `json:"fundingRate"`
 				NextFundingTime      string `json:"nextFundingTime"`
+				FundingRateInterval  string `json:"fundingRateInterval"` // 如 "480" 表示480分钟
 			} `json:"list"`
 		} `json:"result"`
 	}
@@ -77,14 +84,25 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 		
 		fundingRate := parseFloat(item.FundingRate)
+		
+		// 解析资金费率间隔（分钟）
+		intervalMinutes := parseFloat(item.FundingRateInterval)
+		if intervalMinutes == 0 {
+			intervalMinutes = 480 // 默认480分钟（8小时）
+		}
+		intervalHour := intervalMinutes / 60.0
 
 		if price > 0 {
+			// 转换为4小时费率
+			fundingRate4h := fundingRate * (4.0 / intervalHour)
+			
 			result[item.Symbol] = &ContractData{
-				Symbol:          item.Symbol,
-				Price:           price,
-				FundingRate:     fundingRate,
-				FundingInterval: "8h",
-				NextFundingTime: parseInt64(item.NextFundingTime) / 1000, // Bybit返回毫秒
+				Symbol:              item.Symbol,
+				Price:               price,
+				FundingRate:         fundingRate,
+				FundingIntervalHour: intervalHour,
+				FundingRate4h:       fundingRate4h,
+				NextFundingTime:     parseInt64(item.NextFundingTime) / 1000,
 			}
 		}
 	}
