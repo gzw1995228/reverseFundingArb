@@ -20,6 +20,3 @@ go.work
 *.swp
 *.swo
 *~
-
-# Environment variables
-.env
