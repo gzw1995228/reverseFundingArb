@@ -45,10 +45,8 @@ func (b *BinanceExchange) UpdateFundingIntervals() error {
 	}
 
 	var fundingInfos []struct {
-		Symbol                   string `json:"symbol"`
-		AdjustedFundingRateCap   string `json:"adjustedFundingRateCap"`
-		AdjustedFundingRateFloor string `json:"adjustedFundingRateFloor"`
-		FundingIntervalHours     int    `json:"fundingIntervalHours"`
+		Symbol               string `json:"symbol"`
+		FundingIntervalHours int    `json:"fundingIntervalHours"`
 	}
 
 	if err := json.Unmarshal(body, &fundingInfos); err != nil {
@@ -142,6 +140,9 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 
 		// 使用 ticker/price 的价格
 		price := priceMap[item.Symbol]
+		if price <= 0 {
+			continue // 跳过没有价格的合约
+		}
 		
 		fundingRate := parseFloat(item.LastFundingRate)
 		intervalHour := b.getFundingInterval(item.Symbol)
