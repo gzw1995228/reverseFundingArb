@@ -51,13 +51,38 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		RetCode int    `json:"retCode"`
 		RetMsg  string `json:"retMsg"`
 		Result  struct {
-			List []struct {
-				Symbol               string `json:"symbol"`
-				LastPrice            string `json:"lastPrice"`
-				MarkPrice            string `json:"markPrice"`
-				FundingRate          string `json:"fundingRate"`
-				NextFundingTime      string `json:"nextFundingTime"`
-				FundingRateInterval  string `json:"fundingRateInterval"` // 如 "480" 表示480分钟
+			Category string `json:"category"`
+			List     []struct {
+				Symbol              string `json:"symbol"`
+				LastPrice           string `json:"lastPrice"`
+				IndexPrice          string `json:"indexPrice"`
+				MarkPrice           string `json:"markPrice"`
+				PrevPrice24h        string `json:"prevPrice24h"`
+				Price24hPcnt        string `json:"price24hPcnt"`
+				HighPrice24h        string `json:"highPrice24h"`
+				LowPrice24h         string `json:"lowPrice24h"`
+				PrevPrice1h         string `json:"prevPrice1h"`
+				OpenInterest        string `json:"openInterest"`
+				OpenInterestValue   string `json:"openInterestValue"`
+				Turnover24h         string `json:"turnover24h"`
+				Volume24h           string `json:"volume24h"`
+				FundingRate         string `json:"fundingRate"`
+				NextFundingTime     string `json:"nextFundingTime"`
+				PredictedDeliveryPrice string `json:"predictedDeliveryPrice"`
+				BasisRate           string `json:"basisRate"`
+				DeliveryFeeRate     string `json:"deliveryFeeRate"`
+				DeliveryTime        string `json:"deliveryTime"`
+				Ask1Size            string `json:"ask1Size"`
+				Bid1Price           string `json:"bid1Price"`
+				Ask1Price           string `json:"ask1Price"`
+				Bid1Size            string `json:"bid1Size"`
+				Basis               string `json:"basis"`
+				PreOpenPrice        string `json:"preOpenPrice"`
+				PreQty              string `json:"preQty"`
+				CurPreListingPhase  string `json:"curPreListingPhase"`
+				FundingIntervalHour string `json:"fundingIntervalHour"`
+				BasisRateYear       string `json:"basisRateYear"`
+				FundingCap          string `json:"fundingCap"`
 			} `json:"list"`
 		} `json:"result"`
 	}
@@ -68,6 +93,15 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 	if response.RetCode != 0 {
 		return nil, fmt.Errorf("API返回错误: %s", response.RetMsg)
+	}
+
+	// 打印前十个合约信息
+	for i, item := range response.Result.List {
+		if i >= 10 {
+			break
+		}
+		fmt.Printf("[Bybit价格] Symbol: %s, LastPrice: %s, FundingRate: %s, FundingIntervalHour: %s, NextFundingTime: %s\n",
+			item.Symbol, item.LastPrice, item.FundingRate, item.FundingIntervalHour, item.NextFundingTime)
 	}
 
 	result := make(map[string]*ContractData)
@@ -84,13 +118,11 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 		
 		fundingRate := parseFloat(item.FundingRate)
+		intervalHour := parseFloat(item.FundingIntervalHour)
 		
-		// 解析资金费率间隔（分钟）
-		intervalMinutes := parseFloat(item.FundingRateInterval)
-		if intervalMinutes == 0 {
-			intervalMinutes = 480 // 默认480分钟（8小时）
+		if intervalHour == 0 {
+			intervalHour = 8.0 // 默认8小时
 		}
-		intervalHour := intervalMinutes / 60.0
 
 		if price > 0 {
 			// 转换为4小时费率
@@ -102,7 +134,7 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 				FundingRate:         fundingRate,
 				FundingIntervalHour: intervalHour,
 				FundingRate4h:       fundingRate4h,
-				NextFundingTime:     parseInt64(item.NextFundingTime) / 1000,
+				NextFundingTime:     parseInt64(item.NextFundingTime),
 			}
 		}
 	}
