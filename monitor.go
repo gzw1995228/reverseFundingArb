@@ -60,6 +60,7 @@ func (m *Monitor) InitializeExchanges() error {
 }
 
 func (m *Monitor) UpdateFundingIntervals() {
+	log.Println("开始更新所有交易所的结算周期...")
 	var wg sync.WaitGroup
 	for _, exchange := range m.exchanges {
 		wg.Add(1)
@@ -73,6 +74,7 @@ func (m *Monitor) UpdateFundingIntervals() {
 		}(exchange)
 	}
 	wg.Wait()
+	log.Println("所有交易所结算周期更新完成")
 }
 
 func (m *Monitor) CheckArbitrageOpportunities() {

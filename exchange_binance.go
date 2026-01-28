@@ -78,18 +78,18 @@ func (b *BinanceExchange) getFundingInterval(symbol string) float64 {
 }
 
 func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) {
-	// 获取所有合约的资金费率
-	url := "https://fapi.binance.com/fapi/v1/premiumIndex"
+	// 1. 使用 premiumIndex 获取资金费率和下次结算时间
+	premiumURL := "https://fapi.binance.com/fapi/v1/premiumIndex"
 	
-	resp, err := b.client.Get(url)
+	resp, err := b.client.Get(premiumURL)
 	if err != nil {
-		return nil, fmt.Errorf("请求失败: %v", err)
+		return nil, fmt.Errorf("请求premiumIndex失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %v", err)
+		return nil, fmt.Errorf("读取premiumIndex响应失败: %v", err)
 	}
 
 	var premiumIndexes []struct {
@@ -100,7 +100,37 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 	}
 
 	if err := json.Unmarshal(body, &premiumIndexes); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %v", err)
+		return nil, fmt.Errorf("解析premiumIndex响应失败: %v", err)
+	}
+
+	// 2. 使用 /fapi/v2/ticker/price 获取最新价格
+	priceURL := "https://fapi.binance.com/fapi/v2/ticker/price"
+	
+	priceResp, err := b.client.Get(priceURL)
+	if err != nil {
+		return nil, fmt.Errorf("请求ticker/price失败: %v", err)
+	}
+	defer priceResp.Body.Close()
+
+	priceBody, err := io.ReadAll(priceResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取ticker/price响应失败: %v", err)
+	}
+
+	var prices []struct {
+		Symbol string `json:"symbol"`
+		Price  string `json:"price"`
+		Time   int64  `json:"time"`
+	}
+
+	if err := json.Unmarshal(priceBody, &prices); err != nil {
+		return nil, fmt.Errorf("解析ticker/price响应失败: %v", err)
+	}
+
+	// 构建价格映射
+	priceMap := make(map[string]float64)
+	for _, p := range prices {
+		priceMap[p.Symbol] = parseFloat(p.Price)
 	}
 
 	result := make(map[string]*ContractData)
@@ -111,7 +141,12 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 			continue
 		}
 
-		price := parseFloat(item.MarkPrice)
+		// 优先使用 ticker/price 的价格，如果没有则使用 markPrice
+		price := priceMap[item.Symbol]
+		if price <= 0 {
+			price = parseFloat(item.MarkPrice)
+		}
+		
 		fundingRate := parseFloat(item.LastFundingRate)
 		intervalHour := b.getFundingInterval(item.Symbol)
 
