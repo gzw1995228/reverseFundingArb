@@ -49,8 +49,8 @@ func (o *OKXExchange) UpdateFundingIntervals() error {
 		Code string `json:"code"`
 		Data []struct {
 			InstID          string `json:"instId"`
-			FundingTime     string `json:"fundingTime"`
-			NextFundingTime string `json:"nextFundingTime"`
+			FundingTime     string `json:"fundingTime"`     // 下次结算时间
+			NextFundingTime string `json:"nextFundingTime"` // 下下次结算时间
 		} `json:"data"`
 	}
 
@@ -65,6 +65,7 @@ func (o *OKXExchange) UpdateFundingIntervals() error {
 		fundingTime := parseInt64(item.FundingTime)
 		nextFundingTime := parseInt64(item.NextFundingTime)
 		
+		// 计算结算周期：下下次 - 下次
 		if fundingTime > 0 && nextFundingTime > fundingTime {
 			intervalMs := nextFundingTime - fundingTime
 			intervalHour := float64(intervalMs) / (1000.0 * 3600.0)
@@ -109,8 +110,8 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Data []struct {
 			InstID          string `json:"instId"`
 			FundingRate     string `json:"fundingRate"`
-			FundingTime     string `json:"fundingTime"`
-			NextFundingTime string `json:"nextFundingTime"`
+			FundingTime     string `json:"fundingTime"`     // 下次结算时间
+			NextFundingTime string `json:"nextFundingTime"` // 下下次结算时间
 		} `json:"data"`
 	}
 
@@ -172,7 +173,7 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		// 转换为统一格式 (BTC-USDT-SWAP -> BTCUSDT)
 		symbol := item.InstID[:len(item.InstID)-10] + "USDT"
 		
-		// 计算资金费率间隔
+		// 计算资金费率间隔：下下次 - 下次
 		fundingTime := parseInt64(item.FundingTime)
 		nextFundingTime := parseInt64(item.NextFundingTime)
 		intervalHour := 8.0 // 默认
@@ -198,7 +199,7 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			FundingRate:         fundingRate,
 			FundingIntervalHour: intervalHour,
 			FundingRate4h:       fundingRate4h,
-			NextFundingTime:     nextFundingTime,
+			NextFundingTime:     fundingTime, // 使用 fundingTime 作为下次结算时间
 		}
 	}
 
