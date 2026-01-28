@@ -12,6 +12,7 @@ import (
 type GateExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	nextFundingTimes  map[string]int64   // symbol -> next funding time (milliseconds)
 	mu                sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewGateExchange() *GateExchange {
 	return &GateExchange{
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
+		nextFundingTimes: make(map[string]int64),
 	}
 }
 
@@ -31,7 +33,7 @@ func (g *GateExchange) Initialize() error {
 }
 
 func (g *GateExchange) UpdateFundingIntervals() error {
-	// Gate.io的合约信息接口包含funding_interval字段（单位：秒）
+	// Gate.io的合约信息接口包含funding_interval和funding_next_apply字段
 	url := "https://api.gateio.ws/api/v4/futures/usdt/contracts"
 	
 	resp, err := g.client.Get(url)
@@ -46,8 +48,9 @@ func (g *GateExchange) UpdateFundingIntervals() error {
 	}
 
 	var contracts []struct {
-		Name            string `json:"name"`
-		FundingInterval int    `json:"funding_interval"` // 单位：秒
+		Name              string `json:"name"`
+		FundingInterval   int    `json:"funding_interval"`   // 单位：秒
+		FundingNextApply  int64  `json:"funding_next_apply"` // 下次结算时间戳（秒）
 	}
 
 	if err := json.Unmarshal(body, &contracts); err != nil {
@@ -58,14 +61,20 @@ func (g *GateExchange) UpdateFundingIntervals() error {
 	defer g.mu.Unlock()
 
 	for _, contract := range contracts {
+		// Gate的symbol格式如 BTC_USDT，转换为 BTCUSDT
+		symbol := contract.Name
+		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+			symbol = symbol[:len(symbol)-5] + "USDT"
+		}
+		
 		if contract.FundingInterval > 0 {
 			intervalHour := float64(contract.FundingInterval) / 3600.0
-			// Gate的symbol格式如 BTC_USDT，转换为 BTCUSDT
-			symbol := contract.Name
-			if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
-				symbol = symbol[:len(symbol)-5] + "USDT"
-			}
 			g.fundingIntervals[symbol] = intervalHour
+		}
+		
+		if contract.FundingNextApply > 0 {
+			// 转换为毫秒
+			g.nextFundingTimes[symbol] = contract.FundingNextApply * 1000
 		}
 	}
 
@@ -80,6 +89,16 @@ func (g *GateExchange) getFundingInterval(symbol string) float64 {
 		return interval
 	}
 	return 8.0 // 默认8小时
+}
+
+func (g *GateExchange) getNextFundingTime(symbol string) int64 {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	
+	if nextTime, ok := g.nextFundingTimes[symbol]; ok {
+		return nextTime
+	}
+	return 0
 }
 
 func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -100,7 +119,6 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	var tickers []struct {
 		Contract     string `json:"contract"`
 		Last         string `json:"last"`
-		MarkPrice    string `json:"mark_price"`
 		FundingRate  string `json:"funding_rate"`
 	}
 
@@ -118,31 +136,30 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 		price := parseFloat(ticker.Last)
 		if price <= 0 {
-			price = parseFloat(ticker.MarkPrice)
+			continue
 		}
 		
 		fundingRate := parseFloat(ticker.FundingRate)
 
-		if price > 0 {
-			// 转换symbol格式
-			symbol := ticker.Contract
-			if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
-				symbol = symbol[:len(symbol)-5] + "USDT"
-			}
+		// 转换symbol格式
+		symbol := ticker.Contract
+		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+			symbol = symbol[:len(symbol)-5] + "USDT"
+		}
 
-			intervalHour := g.getFundingInterval(symbol)
-			
-			// 转换为4小时费率
-			fundingRate4h := fundingRate * (4.0 / intervalHour)
+		intervalHour := g.getFundingInterval(symbol)
+		nextFundingTime := g.getNextFundingTime(symbol)
+		
+		// 转换为4小时费率
+		fundingRate4h := fundingRate * (4.0 / intervalHour)
 
-			result[symbol] = &ContractData{
-				Symbol:              symbol,
-				Price:               price,
-				FundingRate:         fundingRate,
-				FundingIntervalHour: intervalHour,
-				FundingRate4h:       fundingRate4h,
-				NextFundingTime:     0,
-			}
+		result[symbol] = &ContractData{
+			Symbol:              symbol,
+			Price:               price,
+			FundingRate:         fundingRate,
+			FundingIntervalHour: intervalHour,
+			FundingRate4h:       fundingRate4h,
+			NextFundingTime:     nextFundingTime,
 		}
 	}
 
