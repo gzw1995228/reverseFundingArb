@@ -32,7 +32,7 @@ func main() {
 		log.Printf("已加载微信webhook配置")
 	}
 
-	monitor := NewMonitor(webhookURL, 0.01) // 阈值由周期动态决定
+	monitor := NewMonitor(webhookURL, 0.02) // 阈值由周期动态决定
 
 	// 首次获取所有交易所的资金费率结算周期信息
 	log.Println("正在初始化，获取所有交易所的资金费率结算周期...")
