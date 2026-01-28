@@ -10,10 +10,11 @@ import (
 )
 
 type Monitor struct {
-	webhookURL string
-	threshold  float64
-	exchanges  []Exchange
-	mu         sync.RWMutex
+	webhookURL        string
+	threshold         float64
+	exchanges         []Exchange
+	lastNotifications map[string]time.Time // symbol -> last notification time
+	mu                sync.RWMutex
 }
 
 func NewMonitor(webhookURL string, threshold float64) *Monitor {
@@ -28,6 +29,7 @@ func NewMonitor(webhookURL string, threshold float64) *Monitor {
 			NewBitgetExchange(),
 			NewGateExchange(),
 		},
+		lastNotifications: make(map[string]time.Time),
 	}
 }
 
@@ -327,8 +329,30 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 		return
 	}
 
+	// 过滤出需要通知的机会（1小时内未通知过的）
+	now := time.Now()
+	var validOpportunities []ArbitrageOpportunity
+	
+	m.mu.Lock()
+	for _, opp := range opportunities {
+		// 生成唯一标识：symbol + 高费率交易所 + 低费率交易所
+		key := fmt.Sprintf("%s_%s_%s", opp.Symbol, opp.HighRateExchange, opp.LowRateExchange)
+		
+		lastTime, exists := m.lastNotifications[key]
+		if !exists || now.Sub(lastTime) >= 1*time.Hour {
+			validOpportunities = append(validOpportunities, opp)
+			m.lastNotifications[key] = now
+		}
+	}
+	m.mu.Unlock()
+	
+	if len(validOpportunities) == 0 {
+		log.Println("所有套利机会在1小时内已通知过，跳过通知")
+		return
+	}
+
 	// 只发送前5个最佳机会
-	count := len(opportunities)
+	count := len(validOpportunities)
 	if count > 5 {
 		count = 5
 	}
@@ -339,10 +363,10 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 		threshold = 0.004 // 默认0.4%
 	}
 
-	message := fmt.Sprintf("🔔 发现 %d 个套利机会\n\n", len(opportunities))
+	message := fmt.Sprintf("🔔 发现 %d 个套利机会\n\n", len(validOpportunities))
 	
 	for i := 0; i < count; i++ {
-		opp := opportunities[i]
+		opp := validOpportunities[i]
 		
 		message += fmt.Sprintf("【%s】\n", opp.Symbol)
 		message += fmt.Sprintf("目标时间: %s (%.2f小时后)\n", 
