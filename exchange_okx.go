@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -181,7 +182,7 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	
 	for _, item := range fundingResponse.Data {
 		// 只处理USDT合约
-		if len(item.InstID) < 9 || item.InstID[len(item.InstID)-9:] != "-USDT-SWAP" {
+		if len(item.InstID) < 10 || !strings.HasSuffix(item.InstID, "-USDT-SWAP") {
 			continue
 		}
 
