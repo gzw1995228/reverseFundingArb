@@ -55,34 +55,9 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			List     []struct {
 				Symbol              string `json:"symbol"`
 				LastPrice           string `json:"lastPrice"`
-				IndexPrice          string `json:"indexPrice"`
-				MarkPrice           string `json:"markPrice"`
-				PrevPrice24h        string `json:"prevPrice24h"`
-				Price24hPcnt        string `json:"price24hPcnt"`
-				HighPrice24h        string `json:"highPrice24h"`
-				LowPrice24h         string `json:"lowPrice24h"`
-				PrevPrice1h         string `json:"prevPrice1h"`
-				OpenInterest        string `json:"openInterest"`
-				OpenInterestValue   string `json:"openInterestValue"`
-				Turnover24h         string `json:"turnover24h"`
-				Volume24h           string `json:"volume24h"`
 				FundingRate         string `json:"fundingRate"`
 				NextFundingTime     string `json:"nextFundingTime"`
-				PredictedDeliveryPrice string `json:"predictedDeliveryPrice"`
-				BasisRate           string `json:"basisRate"`
-				DeliveryFeeRate     string `json:"deliveryFeeRate"`
-				DeliveryTime        string `json:"deliveryTime"`
-				Ask1Size            string `json:"ask1Size"`
-				Bid1Price           string `json:"bid1Price"`
-				Ask1Price           string `json:"ask1Price"`
-				Bid1Size            string `json:"bid1Size"`
-				Basis               string `json:"basis"`
-				PreOpenPrice        string `json:"preOpenPrice"`
-				PreQty              string `json:"preQty"`
-				CurPreListingPhase  string `json:"curPreListingPhase"`
 				FundingIntervalHour string `json:"fundingIntervalHour"`
-				BasisRateYear       string `json:"basisRateYear"`
-				FundingCap          string `json:"fundingCap"`
 			} `json:"list"`
 		} `json:"result"`
 	}

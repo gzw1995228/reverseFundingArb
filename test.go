@@ -85,9 +85,9 @@ func testExchange(exchange Exchange) {
 	}
 
 	fmt.Printf("\n4. 前 %d 个合约详情:\n", count)
-	fmt.Printf("%-12s | %-10s | %-12s | %-15s | %-20s | %-15s\n",
-		"合约", "价格", "资金费率", "结算周期(h)", "下次结算时间", "4h费率")
-	fmt.Println("=" + string(make([]byte, 119)))
+	fmt.Printf("%-12s | %-10s | %-12s | %-15s | %-20s | %-22s | %-15s\n",
+		"合约", "价格", "资金费率", "结算周期(h)", "下次结算时间", "下次结算时间戳", "4h费率")
+	fmt.Println("=" + string(make([]byte, 140)))
 
 	for i := 0; i < count; i++ {
 		contract := contractList[i]
@@ -96,12 +96,13 @@ func testExchange(exchange Exchange) {
 		// 格式化下次结算时间
 		nextFundingTime := time.Unix(data.NextFundingTime/1000, 0).Format("01-02 15:04:05")
 
-		fmt.Printf("%-12s | %10.8f | %12.6f%% | %15.2f | %20s | %15.6f%%\n",
+		fmt.Printf("%-12s | %10.8f | %12.6f%% | %15.2f | %20s | %22d | %15.6f%%\n",
 			contract.Symbol,
 			data.Price,
 			data.FundingRate*100,
 			data.FundingIntervalHour,
 			nextFundingTime,
+			data.NextFundingTime,
 			data.FundingRate4h*100,
 		)
 	}
