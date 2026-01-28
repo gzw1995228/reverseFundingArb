@@ -108,7 +108,6 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			FundingRate4h:       fundingRate4h,
 			NextFundingTime:     parseInt64(item.NextFundingTime),
 		}
-		}
 	}
 
 	return result, nil
