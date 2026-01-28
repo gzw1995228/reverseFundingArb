@@ -33,7 +33,7 @@ func NewMonitor(webhookURL string, threshold float64) *Monitor {
 
 func (m *Monitor) InitializeExchanges() error {
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(m.exchanges))
+	errChan := make(chan error, len(m.exchanges)*2)
 
 	for _, exchange := range m.exchanges {
 		wg.Add(1)
@@ -43,6 +43,8 @@ func (m *Monitor) InitializeExchanges() error {
 				errChan <- fmt.Errorf("%s 初始化失败: %v", ex.Name(), err)
 			} else if err := ex.UpdateFundingIntervals(); err != nil {
 				errChan <- fmt.Errorf("%s 更新结算周期失败: %v", ex.Name(), err)
+			} else if err := ex.UpdateContractStatus(); err != nil {
+				errChan <- fmt.Errorf("%s 更新合约状态失败: %v", ex.Name(), err)
 			} else {
 				log.Printf("%s 初始化成功", ex.Name())
 			}
@@ -60,7 +62,7 @@ func (m *Monitor) InitializeExchanges() error {
 }
 
 func (m *Monitor) UpdateFundingIntervals() {
-	log.Println("开始更新所有交易所的结算周期...")
+	log.Println("开始更新所有交易所的结算周期和合约状态...")
 	var wg sync.WaitGroup
 	for _, exchange := range m.exchanges {
 		wg.Add(1)
@@ -68,13 +70,15 @@ func (m *Monitor) UpdateFundingIntervals() {
 			defer wg.Done()
 			if err := ex.UpdateFundingIntervals(); err != nil {
 				log.Printf("%s 更新结算周期失败: %v", ex.Name(), err)
+			} else if err := ex.UpdateContractStatus(); err != nil {
+				log.Printf("%s 更新合约状态失败: %v", ex.Name(), err)
 			} else {
-				log.Printf("%s 结算周期更新成功", ex.Name())
+				log.Printf("%s 结算周期和合约状态更新成功", ex.Name())
 			}
 		}(exchange)
 	}
 	wg.Wait()
-	log.Println("所有交易所结算周期更新完成")
+	log.Println("所有交易所结算周期和合约状态更新完成")
 }
 
 func (m *Monitor) CheckArbitrageOpportunities() {

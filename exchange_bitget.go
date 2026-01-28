@@ -12,6 +12,7 @@ import (
 type BitgetExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	tradingSymbols    map[string]bool    // symbol -> is trading
 	mu                sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewBitgetExchange() *BitgetExchange {
 	return &BitgetExchange{
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
+		tradingSymbols:   make(map[string]bool),
 	}
 }
 
@@ -85,6 +87,55 @@ func (b *BitgetExchange) getFundingInterval(symbol string) float64 {
 		return interval
 	}
 	return 8.0 // 默认8小时
+}
+
+func (b *BitgetExchange) isTrading(symbol string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	trading, ok := b.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (b *BitgetExchange) UpdateContractStatus() error {
+	url := "https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES"
+	
+	resp, err := b.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		Code string `json:"code"`
+		Msg  string `json:"msg"`
+		Data []struct {
+			Symbol       string `json:"symbol"`
+			SymbolStatus string `json:"symbolStatus"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if response.Code != "00000" {
+		return fmt.Errorf("API返回错误: %s - %s", response.Code, response.Msg)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	
+	for _, item := range response.Data {
+		b.tradingSymbols[item.Symbol] = (item.SymbolStatus == "normal")
+	}
+
+	return nil
 }
 
 func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -181,6 +232,11 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	for _, item := range response.Data {
 		// 只处理USDT合约（symbol不包含下划线或特殊后缀）
 		if len(item.Symbol) < 7 || !isUSDTContract(item.Symbol) {
+			continue
+		}
+		
+		// 检查合约状态
+		if !b.isTrading(item.Symbol) {
 			continue
 		}
 

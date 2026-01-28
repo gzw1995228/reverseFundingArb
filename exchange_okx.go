@@ -13,6 +13,7 @@ import (
 type OKXExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	tradingSymbols    map[string]bool    // symbol -> is trading
 	mu                sync.RWMutex
 }
 
@@ -20,6 +21,7 @@ func NewOKXExchange() *OKXExchange {
 	return &OKXExchange{
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
+		tradingSymbols:   make(map[string]bool),
 	}
 }
 
@@ -89,6 +91,57 @@ func (o *OKXExchange) getFundingInterval(symbol string) float64 {
 		return interval
 	}
 	return 8.0 // 默认8小时
+}
+
+func (o *OKXExchange) isTrading(symbol string) bool {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	
+	trading, ok := o.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (o *OKXExchange) UpdateContractStatus() error {
+	url := "https://www.okx.com/api/v5/public/instruments?instType=SWAP"
+	
+	resp, err := o.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		Code string `json:"code"`
+		Data []struct {
+			InstID string `json:"instId"`
+			State  string `json:"state"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	
+	for _, item := range response.Data {
+		// 只处理USDT合约
+		if len(item.InstID) < 10 || !strings.HasSuffix(item.InstID, "-USDT-SWAP") {
+			continue
+		}
+		
+		// 转换为统一格式 (BTC-USDT-SWAP -> BTCUSDT)
+		symbol := item.InstID[:len(item.InstID)-10] + "USDT"
+		o.tradingSymbols[symbol] = (item.State == "live")
+	}
+
+	return nil
 }
 
 func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -164,14 +217,19 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			continue
 		}
 
+		// 转换为统一格式 (BTC-USDT-SWAP -> BTCUSDT)
+		symbol := item.InstID[:len(item.InstID)-10] + "USDT"
+		
+		// 检查合约状态
+		if !o.isTrading(symbol) {
+			continue
+		}
+
 		fundingRate := parseFloat(item.FundingRate)
 		price, ok := priceMap[item.InstID]
 		if !ok || price <= 0 {
 			continue
 		}
-
-		// 转换为统一格式 (BTC-USDT-SWAP -> BTCUSDT)
-		symbol := item.InstID[:len(item.InstID)-10] + "USDT"
 		
 		// 计算资金费率间隔：下下次 - 下次
 		fundingTime := parseInt64(item.FundingTime)

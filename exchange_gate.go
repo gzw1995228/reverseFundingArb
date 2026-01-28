@@ -13,6 +13,7 @@ type GateExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
 	nextFundingTimes  map[string]int64   // symbol -> next funding time (milliseconds)
+	tradingSymbols    map[string]bool    // symbol -> is trading
 	mu                sync.RWMutex
 }
 
@@ -21,6 +22,7 @@ func NewGateExchange() *GateExchange {
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
 		nextFundingTimes: make(map[string]int64),
+		tradingSymbols:   make(map[string]bool),
 	}
 }
 
@@ -51,6 +53,8 @@ func (g *GateExchange) UpdateFundingIntervals() error {
 		Name              string `json:"name"`
 		FundingInterval   int    `json:"funding_interval"`   // 单位：秒
 		FundingNextApply  int64  `json:"funding_next_apply"` // 下次结算时间戳（秒）
+		InDelisting       bool   `json:"in_delisting"`
+		Status            string `json:"status"`
 	}
 
 	if err := json.Unmarshal(body, &contracts); err != nil {
@@ -76,6 +80,9 @@ func (g *GateExchange) UpdateFundingIntervals() error {
 			// 转换为毫秒
 			g.nextFundingTimes[symbol] = contract.FundingNextApply * 1000
 		}
+		
+		// 更新合约状态
+		g.tradingSymbols[symbol] = (contract.Status == "trading" && !contract.InDelisting)
 	}
 
 	return nil
@@ -99,6 +106,19 @@ func (g *GateExchange) getNextFundingTime(symbol string) int64 {
 		return nextTime
 	}
 	return 0
+}
+
+func (g *GateExchange) isTrading(symbol string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	
+	trading, ok := g.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (g *GateExchange) UpdateContractStatus() error {
+	// UpdateFundingIntervals 已经获取了合约状态，这里不需要重复
+	return nil
 }
 
 func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -135,6 +155,17 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			continue
 		}
 
+		// 转换symbol格式
+		symbol := ticker.Contract
+		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+			symbol = symbol[:len(symbol)-5] + "USDT"
+		}
+		
+		// 检查合约状态
+		if !g.isTrading(symbol) {
+			continue
+		}
+
 		price := parseFloat(ticker.Last)
 		if price <= 0 {
 			continue
@@ -147,12 +178,6 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 		
 		fundingRate := parseFloat(ticker.FundingRate)
-
-		// 转换symbol格式
-		symbol := ticker.Contract
-		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
-			symbol = symbol[:len(symbol)-5] + "USDT"
-		}
 
 		intervalHour := g.getFundingInterval(symbol)
 		nextFundingTime := g.getNextFundingTime(symbol)

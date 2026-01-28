@@ -46,7 +46,7 @@ func main() {
 	dataTicker := time.NewTicker(10 * time.Second)
 	defer dataTicker.Stop()
 
-	// 每小时更新一次资金费率结算周期
+	// 每小时更新一次资金费率结算周期和合约状态
 	intervalTicker := time.NewTicker(1 * time.Hour)
 	defer intervalTicker.Stop()
 
@@ -58,7 +58,7 @@ func main() {
 		case <-dataTicker.C:
 			monitor.CheckArbitrageOpportunities()
 		case <-intervalTicker.C:
-			log.Println("更新资金费率结算周期...")
+			log.Println("更新资金费率结算周期和合约状态...")
 			monitor.UpdateFundingIntervals()
 		}
 	}

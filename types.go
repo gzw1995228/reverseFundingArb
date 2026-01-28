@@ -14,4 +14,5 @@ type Exchange interface {
 	Initialize() error
 	FetchFundingRates() (map[string]*ContractData, error)
 	UpdateFundingIntervals() error // 更新资金费率结算周期
+	UpdateContractStatus() error   // 更新合约状态
 }

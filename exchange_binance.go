@@ -12,6 +12,7 @@ import (
 type BinanceExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	tradingSymbols    map[string]bool    // symbol -> is trading
 	mu                sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewBinanceExchange() *BinanceExchange {
 	return &BinanceExchange{
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
+		tradingSymbols:   make(map[string]bool),
 	}
 }
 
@@ -73,6 +75,49 @@ func (b *BinanceExchange) getFundingInterval(symbol string) float64 {
 		return interval
 	}
 	return 8.0 // 默认8小时
+}
+
+func (b *BinanceExchange) isTrading(symbol string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	trading, ok := b.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (b *BinanceExchange) UpdateContractStatus() error {
+	url := "https://fapi.binance.com/fapi/v1/exchangeInfo"
+	
+	resp, err := b.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var exchangeInfo struct {
+		Symbols []struct {
+			Symbol string `json:"symbol"`
+			Status string `json:"status"`
+		} `json:"symbols"`
+	}
+
+	if err := json.Unmarshal(body, &exchangeInfo); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	
+	for _, symbol := range exchangeInfo.Symbols {
+		b.tradingSymbols[symbol.Symbol] = (symbol.Status == "TRADING")
+	}
+
+	return nil
 }
 
 func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -146,6 +191,11 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 	for _, item := range premiumIndexes {
 		// 只处理USDT合约
 		if len(item.Symbol) < 4 || item.Symbol[len(item.Symbol)-4:] != "USDT" {
+			continue
+		}
+		
+		// 检查合约状态
+		if !b.isTrading(item.Symbol) {
 			continue
 		}
 

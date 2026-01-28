@@ -12,6 +12,7 @@ import (
 type MEXCExchange struct {
 	client            *http.Client
 	fundingIntervals  map[string]float64 // symbol -> interval in hours
+	tradingSymbols    map[string]bool    // symbol -> is trading
 	mu                sync.RWMutex
 }
 
@@ -19,6 +20,7 @@ func NewMEXCExchange() *MEXCExchange {
 	return &MEXCExchange{
 		client:           &http.Client{Timeout: 10 * time.Second},
 		fundingIntervals: make(map[string]float64),
+		tradingSymbols:   make(map[string]bool),
 	}
 }
 
@@ -88,6 +90,60 @@ func (m *MEXCExchange) getFundingInterval(symbol string) float64 {
 		return interval
 	}
 	return 8.0 // 默认8小时
+}
+
+func (m *MEXCExchange) isTrading(symbol string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	trading, ok := m.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (m *MEXCExchange) UpdateContractStatus() error {
+	url := "https://contract.mexc.com/api/v1/contract/detail"
+	
+	resp, err := m.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		Success bool `json:"success"`
+		Code    int  `json:"code"`
+		Data    []struct {
+			Symbol string `json:"symbol"`
+			State  int    `json:"state"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if !response.Success {
+		return fmt.Errorf("API返回错误，code: %d", response.Code)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	for _, item := range response.Data {
+		// 转换symbol格式
+		symbol := item.Symbol
+		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+			symbol = symbol[:len(symbol)-5] + "USDT"
+		}
+		m.tradingSymbols[symbol] = (item.State == 0)
+	}
+
+	return nil
 }
 
 func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
@@ -172,6 +228,17 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			continue
 		}
 
+		// 转换symbol格式
+		symbol := item.Symbol
+		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
+			symbol = symbol[:len(symbol)-5] + "USDT"
+		}
+		
+		// 检查合约状态
+		if !m.isTrading(symbol) {
+			continue
+		}
+
 		ticker, ok := tickerMap[item.Symbol]
 		if !ok || ticker.Price <= 0 {
 			continue
@@ -180,12 +247,6 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		// 过滤24h交易额小于100万的合约
 		if ticker.Amount24 < 1000000 {
 			continue
-		}
-
-		// 转换symbol格式
-		symbol := item.Symbol
-		if len(symbol) > 5 && symbol[len(symbol)-5:] == "_USDT" {
-			symbol = symbol[:len(symbol)-5] + "USDT"
 		}
 
 		intervalHour := float64(item.CollectCycle)

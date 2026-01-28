@@ -10,13 +10,15 @@ import (
 )
 
 type BybitExchange struct {
-	client *http.Client
-	mu     sync.RWMutex
+	client         *http.Client
+	tradingSymbols map[string]bool // symbol -> is trading
+	mu             sync.RWMutex
 }
 
 func NewBybitExchange() *BybitExchange {
 	return &BybitExchange{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client:         &http.Client{Timeout: 10 * time.Second},
+		tradingSymbols: make(map[string]bool),
 	}
 }
 
@@ -30,6 +32,57 @@ func (b *BybitExchange) Initialize() error {
 
 func (b *BybitExchange) UpdateFundingIntervals() error {
 	// Bybit的资金费率周期在ticker接口中返回
+	return nil
+}
+
+func (b *BybitExchange) isTrading(symbol string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	
+	trading, ok := b.tradingSymbols[symbol]
+	return ok && trading
+}
+
+func (b *BybitExchange) UpdateContractStatus() error {
+	url := "https://api.bybit.com/v5/market/instruments-info?category=linear"
+	
+	resp, err := b.client.Get(url)
+	if err != nil {
+		return fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	var response struct {
+		RetCode int    `json:"retCode"`
+		RetMsg  string `json:"retMsg"`
+		Result  struct {
+			List []struct {
+				Symbol string `json:"symbol"`
+				Status string `json:"status"`
+			} `json:"list"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	if response.RetCode != 0 {
+		return fmt.Errorf("API返回错误: %s", response.RetMsg)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	
+	for _, item := range response.Result.List {
+		b.tradingSymbols[item.Symbol] = (item.Status == "Trading")
+	}
+
 	return nil
 }
 
@@ -76,6 +129,11 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	for _, item := range response.Result.List {
 		// 只处理USDT合约
 		if len(item.Symbol) < 4 || item.Symbol[len(item.Symbol)-4:] != "USDT" {
+			continue
+		}
+		
+		// 检查合约状态
+		if !b.isTrading(item.Symbol) {
 			continue
 		}
 
