@@ -94,7 +94,6 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 
 	var premiumIndexes []struct {
 		Symbol          string `json:"symbol"`
-		MarkPrice       string `json:"markPrice"`
 		LastFundingRate string `json:"lastFundingRate"`
 		NextFundingTime int64  `json:"nextFundingTime"`
 	}
@@ -141,27 +140,22 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 			continue
 		}
 
-		// 优先使用 ticker/price 的价格，如果没有则使用 markPrice
+		// 使用 ticker/price 的价格
 		price := priceMap[item.Symbol]
-		if price <= 0 {
-			price = parseFloat(item.MarkPrice)
-		}
 		
 		fundingRate := parseFloat(item.LastFundingRate)
 		intervalHour := b.getFundingInterval(item.Symbol)
 
-		if price > 0 {
-			// 转换为4小时费率
-			fundingRate4h := fundingRate * (4.0 / intervalHour)
-			
-			result[item.Symbol] = &ContractData{
-				Symbol:              item.Symbol,
-				Price:               price,
-				FundingRate:         fundingRate,
-				FundingIntervalHour: intervalHour,
-				FundingRate4h:       fundingRate4h,
-				NextFundingTime:     item.NextFundingTime,
-			}
+		// 转换为4小时费率
+		fundingRate4h := fundingRate * (4.0 / intervalHour)
+		
+		result[item.Symbol] = &ContractData{
+			Symbol:              item.Symbol,
+			Price:               price,
+			FundingRate:         fundingRate,
+			FundingIntervalHour: intervalHour,
+			FundingRate4h:       fundingRate4h,
+			NextFundingTime:     item.NextFundingTime,
 		}
 	}
 

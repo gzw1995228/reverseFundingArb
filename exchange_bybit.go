@@ -79,10 +79,6 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 
 		price := parseFloat(item.LastPrice)
-		if price <= 0 {
-			price = parseFloat(item.MarkPrice)
-		}
-		
 		fundingRate := parseFloat(item.FundingRate)
 		intervalHour := parseFloat(item.FundingIntervalHour)
 		
