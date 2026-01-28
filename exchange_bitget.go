@@ -137,12 +137,16 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	}
 
 	var fundingResponse struct {
-		Code string `json:"code"`
-		Msg  string `json:"msg"`
-		Data []struct {
-			Symbol               string `json:"symbol"`
-			FundingRateInterval  string `json:"fundingRateInterval"` // 单位：小时
-			NextFundingTime      string `json:"nextFundingTime"`     // 下次结算时间戳（毫秒）
+		Code        string `json:"code"`
+		Msg         string `json:"msg"`
+		RequestTime string `json:"requestTime"`
+		Data        []struct {
+			Symbol           string `json:"symbol"`
+			FundingRate      string `json:"fundingRate"`
+			FundingRateInterval string `json:"fundingRateInterval"` // 单位：小时
+			NextUpdate       string `json:"nextUpdate"`             // 下次更新时间戳（毫秒）
+			MinFundingRate   string `json:"minFundingRate"`
+			MaxFundingRate   string `json:"maxFundingRate"`
 		} `json:"data"`
 	}
 
@@ -169,9 +173,9 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			b.mu.Unlock()
 		}
 		
-		nextFundingTime := parseInt64(item.NextFundingTime)
-		if nextFundingTime > 0 {
-			nextFundingTimeMap[item.Symbol] = nextFundingTime
+		nextUpdate := parseInt64(item.NextUpdate)
+		if nextUpdate > 0 {
+			nextFundingTimeMap[item.Symbol] = nextUpdate
 		}
 	}
 

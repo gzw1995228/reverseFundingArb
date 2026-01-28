@@ -95,15 +95,6 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		return nil, fmt.Errorf("API返回错误: %s", response.RetMsg)
 	}
 
-	// 打印前十个合约信息
-	for i, item := range response.Result.List {
-		if i >= 10 {
-			break
-		}
-		fmt.Printf("[Bybit价格] Symbol: %s, LastPrice: %s, FundingRate: %s, FundingIntervalHour: %s, NextFundingTime: %s\n",
-			item.Symbol, item.LastPrice, item.FundingRate, item.FundingIntervalHour, item.NextFundingTime)
-	}
-
 	result := make(map[string]*ContractData)
 	
 	for _, item := range response.Result.List {
