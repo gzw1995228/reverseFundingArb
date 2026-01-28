@@ -161,6 +161,15 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		return nil, fmt.Errorf("解析价格响应失败: %v", err)
 	}
 
+	// 打印前十个合约信息
+	for i, item := range priceResponse.Data {
+		if i >= 10 {
+			break
+		}
+		fmt.Printf("[OKX价格] InstID: %s, Last: %s, AskPx: %s, BidPx: %s\n", 
+			item.InstID, item.Last, item.AskPx, item.BidPx)
+	}
+
 	priceMap := make(map[string]float64)
 	for _, item := range priceResponse.Data {
 		if price := parseFloat(item.Last); price > 0 {
