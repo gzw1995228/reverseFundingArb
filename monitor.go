@@ -282,11 +282,14 @@ func (m *Monitor) analyzeAtTimestamp(symbol string, exchangeList []struct {
 	netProfit := (highRate.accumulatedRate - lowRate.accumulatedRate) - priceSpread
 
 	// 统一阈值 0.4%
-	threshold := 0.004
+	threshold := m.threshold
+	if threshold == 0 {
+		threshold = 0.004 // 默认0.4%
+	}
 
 	if netProfit > threshold {
-		// 格式化目标时间
-		targetTime := time.Unix(targetTimestamp/1000, 0)
+		// 格式化目标时间为 UTC+8
+		targetTime := time.Unix(targetTimestamp/1000, 0).In(time.FixedZone("CST", 8*3600))
 		
 		opportunities = append(opportunities, ArbitrageOpportunity{
 			Symbol:              symbol,
@@ -330,6 +333,12 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 	if count > 5 {
 		count = 5
 	}
+	
+	// 获取阈值
+	threshold := m.threshold
+	if threshold == 0 {
+		threshold = 0.004 // 默认0.4%
+	}
 
 	message := fmt.Sprintf("🔔 发现 %d 个套利机会\n\n", len(opportunities))
 	
@@ -339,7 +348,7 @@ func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
 		message += fmt.Sprintf("【%s】\n", opp.Symbol)
 		message += fmt.Sprintf("目标时间: %s (%.2f小时后)\n", 
 			opp.TargetTime.Format("01-02 15:04"), opp.TimeToTarget)
-		message += fmt.Sprintf("净收益: %.4f%% (阈值: 0.40%%)\n", opp.NetProfit*100)
+		message += fmt.Sprintf("净收益: %.4f%% (阈值: %.2f%%)\n", opp.NetProfit*100, threshold*100)
 		
 		// 高费率方
 		if opp.HighSettlements > 0 {
