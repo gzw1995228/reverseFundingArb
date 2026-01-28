@@ -5,9 +5,16 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// 加载 .env 文件
+	if err := godotenv.Load(); err != nil {
+		log.Println("警告: 未找到 .env 文件，将使用系统环境变量")
+	}
+
 	// 添加测试标志
 	testFlag := flag.Bool("test", false, "运行测试模式")
 	flag.Parse()
@@ -21,6 +28,8 @@ func main() {
 	webhookURL := os.Getenv("WECHAT_WEBHOOK")
 	if webhookURL == "" {
 		log.Println("警告: 未配置WECHAT_WEBHOOK环境变量，将无法发送微信通知")
+	} else {
+		log.Printf("已加载微信webhook配置")
 	}
 
 	monitor := NewMonitor(webhookURL, 0) // 阈值由周期动态决定
