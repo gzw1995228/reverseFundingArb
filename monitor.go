@@ -314,9 +314,9 @@ func (m *Monitor) analyzeAtTimestamp(symbol string, exchangeList []struct {
 	return opportunities
 }
 
-// getThresholdByInterval 统一阈值为0.4%
+// getThresholdByInterval 统一阈值为1%
 func (m *Monitor) getThresholdByInterval(interval float64) float64 {
-	return 0.004 // 0.4%
+	return 0.01 // 1%
 }
 
 func (m *Monitor) sendNotifications(opportunities []ArbitrageOpportunity) {
