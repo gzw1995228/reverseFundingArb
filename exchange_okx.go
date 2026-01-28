@@ -136,10 +136,24 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 	var priceResponse struct {
 		Code string `json:"code"`
+		Msg  string `json:"msg"`
 		Data []struct {
+			InstType string `json:"instType"`
 			InstID   string `json:"instId"`
 			Last     string `json:"last"`
-			MarkPx   string `json:"markPx"`
+			LastSz   string `json:"lastSz"`
+			AskPx    string `json:"askPx"`
+			AskSz    string `json:"askSz"`
+			BidPx    string `json:"bidPx"`
+			BidSz    string `json:"bidSz"`
+			Open24h  string `json:"open24h"`
+			High24h  string `json:"high24h"`
+			Low24h   string `json:"low24h"`
+			VolCcy24h string `json:"volCcy24h"`
+			Vol24h   string `json:"vol24h"`
+			SodUtc0  string `json:"sodUtc0"`
+			SodUtc8  string `json:"sodUtc8"`
+			Ts       string `json:"ts"`
 		} `json:"data"`
 	}
 
@@ -150,8 +164,6 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	priceMap := make(map[string]float64)
 	for _, item := range priceResponse.Data {
 		if price := parseFloat(item.Last); price > 0 {
-			priceMap[item.InstID] = price
-		} else if price := parseFloat(item.MarkPx); price > 0 {
 			priceMap[item.InstID] = price
 		}
 	}
