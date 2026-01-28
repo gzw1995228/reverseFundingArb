@@ -61,85 +61,20 @@ func (m *Monitor) InitializeExchanges() error {
 
 func (m *Monitor) UpdateFundingIntervals() {
 	log.Println("开始更新所有交易所的结算周期...")
-	
-	type ExchangeResult struct {
-		Name      string
-		Error     error
-		Contracts map[string]*ContractData
-	}
-	
-	resultChan := make(chan ExchangeResult, len(m.exchanges))
 	var wg sync.WaitGroup
-	
 	for _, exchange := range m.exchanges {
 		wg.Add(1)
 		go func(ex Exchange) {
 			defer wg.Done()
 			if err := ex.UpdateFundingIntervals(); err != nil {
-				resultChan <- ExchangeResult{Name: ex.Name(), Error: err}
+				log.Printf("%s 更新结算周期失败: %v", ex.Name(), err)
 			} else {
-				// 获取前10个合约数据用于打印
-				contracts, _ := ex.FetchFundingRates()
-				resultChan <- ExchangeResult{Name: ex.Name(), Contracts: contracts}
+				log.Printf("%s 结算周期更新成功", ex.Name())
 			}
 		}(exchange)
 	}
-	
 	wg.Wait()
-	close(resultChan)
-	
-	// 处理结果并打印
-	for result := range resultChan {
-		if result.Error != nil {
-			log.Printf("%s 更新结算周期失败: %v", result.Name, result.Error)
-		} else {
-			log.Printf("%s 结算周期更新成功，共 %d 个合约", result.Name, len(result.Contracts))
-			
-			// 打印前10个合约
-			m.printTop10Contracts(result.Name, result.Contracts)
-		}
-	}
-	
 	log.Println("所有交易所结算周期更新完成")
-}
-
-// printTop10Contracts 打印前10个合约信息
-func (m *Monitor) printTop10Contracts(exchangeName string, contracts map[string]*ContractData) {
-	if len(contracts) == 0 {
-		return
-	}
-	
-	// 转换为切片并排序
-	type ContractInfo struct {
-		Symbol string
-		Data   *ContractData
-	}
-	
-	var contractList []ContractInfo
-	for symbol, data := range contracts {
-		contractList = append(contractList, ContractInfo{symbol, data})
-	}
-	
-	// 按符号排序
-	sort.Slice(contractList, func(i, j int) bool {
-		return contractList[i].Symbol < contractList[j].Symbol
-	})
-	
-	// 只打印前10个
-	count := len(contractList)
-	if count > 10 {
-		count = 10
-	}
-	
-	log.Printf("  %s 前 %d 个合约:", exchangeName, count)
-	for i := 0; i < count; i++ {
-		contract := contractList[i]
-		data := contract.Data
-		nextTime := time.Unix(data.NextFundingTime/1000, 0).Format("01-02 15:04")
-		log.Printf("    %s: 价格=%.4f, 费率=%.4f%%, 周期=%.1fh, 下次结算=%s",
-			contract.Symbol, data.Price, data.FundingRate*100, 
-			data.FundingIntervalHour, nextTime)
-	}
 }
 
 func (m *Monitor) CheckArbitrageOpportunities() {
@@ -178,9 +113,6 @@ func (m *Monitor) CheckArbitrageOpportunities() {
 		}
 		exchangeDataMap[data.Name] = data.Contracts
 		log.Printf("%s 获取到 %d 个合约", data.Name, len(data.Contracts))
-		
-		// 打印前10个合约
-		m.printTop10Contracts(data.Name, data.Contracts)
 	}
 
 	// 分析套利机会
