@@ -1,12 +1,22 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"time"
 )
 
 func main() {
+	// 添加测试标志
+	testFlag := flag.Bool("test", false, "运行测试模式")
+	flag.Parse()
+
+	if *testFlag {
+		TestAllExchanges()
+		return
+	}
+
 	// 从环境变量获取微信webhook
 	webhookURL := os.Getenv("WECHAT_WEBHOOK")
 	if webhookURL == "" {
