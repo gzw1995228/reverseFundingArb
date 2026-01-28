@@ -31,9 +31,7 @@ func (o *OKXExchange) Initialize() error {
 }
 
 func (o *OKXExchange) UpdateFundingIntervals() error {
-	// OKX需要逐个查询合约来获取资金费率间隔
-	// 先获取所有合约列表
-	url := "https://www.okx.com/api/v5/public/instruments?instType=SWAP"
+	url := "https://www.okx.com/api/v5/public/funding-rate?instId=ANY"
 	
 	resp, err := o.client.Get(url)
 	if err != nil {
@@ -49,7 +47,9 @@ func (o *OKXExchange) UpdateFundingIntervals() error {
 	var response struct {
 		Code string `json:"code"`
 		Data []struct {
-			InstID string `json:"instId"`
+			InstID          string `json:"instId"`
+			FundingTime     string `json:"fundingTime"`
+			NextFundingTime string `json:"nextFundingTime"`
 		} `json:"data"`
 	}
 
@@ -57,36 +57,10 @@ func (o *OKXExchange) UpdateFundingIntervals() error {
 		return fmt.Errorf("解析响应失败: %v", err)
 	}
 
-	// 获取资金费率信息来计算间隔
-	fundingURL := "https://www.okx.com/api/v5/public/funding-rate?instType=SWAP"
-	fundingResp, err := o.client.Get(fundingURL)
-	if err != nil {
-		return fmt.Errorf("获取资金费率失败: %v", err)
-	}
-	defer fundingResp.Body.Close()
-
-	fundingBody, err := io.ReadAll(fundingResp.Body)
-	if err != nil {
-		return fmt.Errorf("读取资金费率响应失败: %v", err)
-	}
-
-	var fundingResponse struct {
-		Code string `json:"code"`
-		Data []struct {
-			InstID          string `json:"instId"`
-			FundingTime     string `json:"fundingTime"`
-			NextFundingTime string `json:"nextFundingTime"`
-		} `json:"data"`
-	}
-
-	if err := json.Unmarshal(fundingBody, &fundingResponse); err != nil {
-		return fmt.Errorf("解析资金费率响应失败: %v", err)
-	}
-
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	for _, item := range fundingResponse.Data {
+	for _, item := range response.Data {
 		fundingTime := parseInt64(item.FundingTime)
 		nextFundingTime := parseInt64(item.NextFundingTime)
 		
@@ -116,36 +90,35 @@ func (o *OKXExchange) getFundingInterval(symbol string) float64 {
 }
 
 func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
-	url := "https://www.okx.com/api/v5/public/funding-rate?instType=SWAP"
-	
-	resp, err := o.client.Get(url)
+	// 获取资金费率和时间信息
+	fundingURL := "https://www.okx.com/api/v5/public/funding-rate?instId=ANY"
+	fundingResp, err := o.client.Get(fundingURL)
 	if err != nil {
 		return nil, fmt.Errorf("请求失败: %v", err)
 	}
-	defer resp.Body.Close()
+	defer fundingResp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	fundingBody, err := io.ReadAll(fundingResp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	var response struct {
+	var fundingResponse struct {
 		Code string `json:"code"`
 		Data []struct {
 			InstID          string `json:"instId"`
 			FundingRate     string `json:"fundingRate"`
-			NextFundingRate string `json:"nextFundingRate"`
-			NextFundingTime string `json:"nextFundingTime"`
 			FundingTime     string `json:"fundingTime"`
+			NextFundingTime string `json:"nextFundingTime"`
 		} `json:"data"`
 	}
 
-	if err := json.Unmarshal(body, &response); err != nil {
+	if err := json.Unmarshal(fundingBody, &fundingResponse); err != nil {
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
-	if response.Code != "0" {
-		return nil, fmt.Errorf("API返回错误: %s", response.Code)
+	if fundingResponse.Code != "0" {
+		return nil, fmt.Errorf("API返回错误: %s", fundingResponse.Code)
 	}
 
 	// 获取价格信息
@@ -185,7 +158,7 @@ func (o *OKXExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 	result := make(map[string]*ContractData)
 	
-	for _, item := range response.Data {
+	for _, item := range fundingResponse.Data {
 		// 只处理USDT合约
 		if len(item.InstID) < 9 || item.InstID[len(item.InstID)-9:] != "-USDT-SWAP" {
 			continue
