@@ -116,7 +116,6 @@ func (m *Monitor) CheckArbitrageOpportunities() {
 			continue
 		}
 		exchangeDataMap[data.Name] = data.Contracts
-		log.Printf("%s 获取到 %d 个合约", data.Name, len(data.Contracts))
 	}
 
 	// 分析套利机会
