@@ -88,7 +88,7 @@ func (b *BitgetExchange) getFundingInterval(symbol string) float64 {
 }
 
 func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
-	// 获取资金费率和价格信息（使用tickers接口，包含fundingRate）
+	// 获取资金费率和价格信息（使用tickers接口，包含fundingRate和quoteVolume）
 	url := "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
 	
 	resp, err := b.client.Get(url)
@@ -106,9 +106,10 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Code string `json:"code"`
 		Msg  string `json:"msg"`
 		Data []struct {
-			Symbol               string `json:"symbol"`
-			LastPr               string `json:"lastPr"`
-			FundingRate          string `json:"fundingRate"`
+			Symbol      string `json:"symbol"`
+			LastPr      string `json:"lastPr"`
+			FundingRate string `json:"fundingRate"`
+			QuoteVolume string `json:"quoteVolume"` // 24h成交额
 		} `json:"data"`
 	}
 
@@ -185,6 +186,12 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 		price := parseFloat(item.LastPr)
 		if price <= 0 {
+			continue
+		}
+		
+		// 过滤24h交易额小于100万的合约
+		quoteVolume := parseFloat(item.QuoteVolume)
+		if quoteVolume < 1000000 {
 			continue
 		}
 

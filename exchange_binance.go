@@ -100,34 +100,45 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 		return nil, fmt.Errorf("解析premiumIndex响应失败: %v", err)
 	}
 
-	// 2. 使用 /fapi/v2/ticker/price 获取最新价格
-	priceURL := "https://fapi.binance.com/fapi/v2/ticker/price"
+	// 2. 使用 /fapi/v1/ticker/24hr 获取价格和24h交易额
+	tickerURL := "https://fapi.binance.com/fapi/v1/ticker/24hr"
 	
-	priceResp, err := b.client.Get(priceURL)
+	tickerResp, err := b.client.Get(tickerURL)
 	if err != nil {
-		return nil, fmt.Errorf("请求ticker/price失败: %v", err)
+		return nil, fmt.Errorf("请求ticker/24hr失败: %v", err)
 	}
-	defer priceResp.Body.Close()
+	defer tickerResp.Body.Close()
 
-	priceBody, err := io.ReadAll(priceResp.Body)
+	tickerBody, err := io.ReadAll(tickerResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取ticker/price响应失败: %v", err)
+		return nil, fmt.Errorf("读取ticker/24hr响应失败: %v", err)
 	}
 
-	var prices []struct {
-		Symbol string `json:"symbol"`
-		Price  string `json:"price"`
-		Time   int64  `json:"time"`
+	var tickers []struct {
+		Symbol      string `json:"symbol"`
+		LastPrice   string `json:"lastPrice"`
+		QuoteVolume string `json:"quoteVolume"` // 24h成交额
 	}
 
-	if err := json.Unmarshal(priceBody, &prices); err != nil {
-		return nil, fmt.Errorf("解析ticker/price响应失败: %v", err)
+	if err := json.Unmarshal(tickerBody, &tickers); err != nil {
+		return nil, fmt.Errorf("解析ticker/24hr响应失败: %v", err)
 	}
 
-	// 构建价格映射
-	priceMap := make(map[string]float64)
-	for _, p := range prices {
-		priceMap[p.Symbol] = parseFloat(p.Price)
+	// 构建价格和交易额映射
+	type TickerData struct {
+		Price       float64
+		QuoteVolume float64
+	}
+	tickerMap := make(map[string]TickerData)
+	for _, t := range tickers {
+		price := parseFloat(t.LastPrice)
+		quoteVolume := parseFloat(t.QuoteVolume)
+		if price > 0 {
+			tickerMap[t.Symbol] = TickerData{
+				Price:       price,
+				QuoteVolume: quoteVolume,
+			}
+		}
 	}
 
 	result := make(map[string]*ContractData)
@@ -138,10 +149,15 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 			continue
 		}
 
-		// 使用 ticker/price 的价格
-		price := priceMap[item.Symbol]
-		if price <= 0 {
-			continue // 跳过没有价格的合约
+		// 获取价格和交易额
+		ticker, ok := tickerMap[item.Symbol]
+		if !ok || ticker.Price <= 0 {
+			continue
+		}
+		
+		// 过滤24h交易额小于100万的合约
+		if ticker.QuoteVolume < 1000000 {
+			continue
 		}
 		
 		fundingRate := parseFloat(item.LastFundingRate)
@@ -152,7 +168,7 @@ func (b *BinanceExchange) FetchFundingRates() (map[string]*ContractData, error) 
 		
 		result[item.Symbol] = &ContractData{
 			Symbol:              item.Symbol,
-			Price:               price,
+			Price:               ticker.Price,
 			FundingRate:         fundingRate,
 			FundingIntervalHour: intervalHour,
 			FundingRate4h:       fundingRate4h,

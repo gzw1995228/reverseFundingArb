@@ -58,6 +58,7 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 				FundingRate         string `json:"fundingRate"`
 				NextFundingTime     string `json:"nextFundingTime"`
 				FundingIntervalHour string `json:"fundingIntervalHour"`
+				Turnover24h         string `json:"turnover24h"` // 24h成交额
 			} `json:"list"`
 		} `json:"result"`
 	}
@@ -79,6 +80,16 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 
 		price := parseFloat(item.LastPrice)
+		if price <= 0 {
+			continue
+		}
+		
+		// 过滤24h交易额小于100万的合约
+		turnover24h := parseFloat(item.Turnover24h)
+		if turnover24h < 1000000 {
+			continue
+		}
+		
 		fundingRate := parseFloat(item.FundingRate)
 		intervalHour := parseFloat(item.FundingIntervalHour)
 		
@@ -86,18 +97,17 @@ func (b *BybitExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			intervalHour = 8.0 // 默认8小时
 		}
 
-		if price > 0 {
-			// 转换为4小时费率
-			fundingRate4h := fundingRate * (4.0 / intervalHour)
-			
-			result[item.Symbol] = &ContractData{
-				Symbol:              item.Symbol,
-				Price:               price,
-				FundingRate:         fundingRate,
-				FundingIntervalHour: intervalHour,
-				FundingRate4h:       fundingRate4h,
-				NextFundingTime:     parseInt64(item.NextFundingTime),
-			}
+		// 转换为4小时费率
+		fundingRate4h := fundingRate * (4.0 / intervalHour)
+		
+		result[item.Symbol] = &ContractData{
+			Symbol:              item.Symbol,
+			Price:               price,
+			FundingRate:         fundingRate,
+			FundingIntervalHour: intervalHour,
+			FundingRate4h:       fundingRate4h,
+			NextFundingTime:     parseInt64(item.NextFundingTime),
+		}
 		}
 	}
 

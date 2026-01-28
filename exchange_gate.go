@@ -117,9 +117,10 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	}
 
 	var tickers []struct {
-		Contract     string `json:"contract"`
-		Last         string `json:"last"`
-		FundingRate  string `json:"funding_rate"`
+		Contract        string `json:"contract"`
+		Last            string `json:"last"`
+		FundingRate     string `json:"funding_rate"`
+		Volume24hQuote  string `json:"volume_24h_quote"` // 24h成交额（报价货币）
 	}
 
 	if err := json.Unmarshal(body, &tickers); err != nil {
@@ -136,6 +137,12 @@ func (g *GateExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 		price := parseFloat(ticker.Last)
 		if price <= 0 {
+			continue
+		}
+		
+		// 过滤24h交易额小于100万的合约
+		volume24hQuote := parseFloat(ticker.Volume24hQuote)
+		if volume24hQuote < 1000000 {
 			continue
 		}
 		

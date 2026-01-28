@@ -124,7 +124,7 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		return nil, fmt.Errorf("API返回错误，code: %d", response.Code)
 	}
 
-	// 获取价格信息
+	// 获取价格和交易额信息
 	priceURL := "https://contract.mexc.com/api/v1/contract/ticker"
 	priceResp, err := m.client.Get(priceURL)
 	if err != nil {
@@ -142,6 +142,7 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Data    []struct {
 			Symbol    string  `json:"symbol"`
 			LastPrice float64 `json:"lastPrice"`
+			Amount24  float64 `json:"amount24"` // 24h成交额
 		} `json:"data"`
 	}
 
@@ -149,10 +150,17 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		return nil, fmt.Errorf("解析价格响应失败: %v", err)
 	}
 
-	priceMap := make(map[string]float64)
+	type TickerData struct {
+		Price   float64
+		Amount24 float64
+	}
+	tickerMap := make(map[string]TickerData)
 	for _, item := range priceResponse.Data {
 		if item.LastPrice > 0 {
-			priceMap[item.Symbol] = item.LastPrice
+			tickerMap[item.Symbol] = TickerData{
+				Price:   item.LastPrice,
+				Amount24: item.Amount24,
+			}
 		}
 	}
 
@@ -164,8 +172,13 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			continue
 		}
 
-		price, ok := priceMap[item.Symbol]
-		if !ok || price <= 0 {
+		ticker, ok := tickerMap[item.Symbol]
+		if !ok || ticker.Price <= 0 {
+			continue
+		}
+		
+		// 过滤24h交易额小于100万的合约
+		if ticker.Amount24 < 1000000 {
 			continue
 		}
 
@@ -190,7 +203,7 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 
 		result[symbol] = &ContractData{
 			Symbol:              symbol,
-			Price:               price,
+			Price:               ticker.Price,
 			FundingRate:         item.FundingRate,
 			FundingIntervalHour: intervalHour,
 			FundingRate4h:       fundingRate4h,
