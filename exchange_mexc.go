@@ -109,9 +109,10 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Success bool `json:"success"`
 		Code    int  `json:"code"`
 		Data    []struct {
-			Symbol       string  `json:"symbol"`
-			FundingRate  float64 `json:"fundingRate"`
-			CollectCycle int     `json:"collectCycle"` // 单位：小时
+			Symbol          string  `json:"symbol"`
+			FundingRate     float64 `json:"fundingRate"`
+			CollectCycle    int     `json:"collectCycle"`    // 单位：小时
+			NextSettleTime  int64   `json:"nextSettleTime"`  // 下次结算时间戳（毫秒）
 		} `json:"data"`
 	}
 
@@ -141,7 +142,6 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Data    []struct {
 			Symbol    string  `json:"symbol"`
 			LastPrice float64 `json:"lastPrice"`
-			MarkPrice float64 `json:"fairPrice"`
 		} `json:"data"`
 	}
 
@@ -153,8 +153,6 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	for _, item := range priceResponse.Data {
 		if item.LastPrice > 0 {
 			priceMap[item.Symbol] = item.LastPrice
-		} else if item.MarkPrice > 0 {
-			priceMap[item.Symbol] = item.MarkPrice
 		}
 	}
 
@@ -196,7 +194,7 @@ func (m *MEXCExchange) FetchFundingRates() (map[string]*ContractData, error) {
 			FundingRate:         item.FundingRate,
 			FundingIntervalHour: intervalHour,
 			FundingRate4h:       fundingRate4h,
-			NextFundingTime:     0,
+			NextFundingTime:     item.NextSettleTime,
 		}
 	}
 

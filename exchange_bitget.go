@@ -108,9 +108,7 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		Data []struct {
 			Symbol               string `json:"symbol"`
 			LastPr               string `json:"lastPr"`
-			MarkPrice            string `json:"markPrice"`
 			FundingRate          string `json:"fundingRate"`
-			IndexPrice           string `json:"indexPrice"`
 		} `json:"data"`
 	}
 
@@ -139,14 +137,12 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 	var fundingResponse struct {
 		Code        string `json:"code"`
 		Msg         string `json:"msg"`
-		RequestTime string `json:"requestTime"`
+		RequestTime int64  `json:"requestTime"`
 		Data        []struct {
-			Symbol           string `json:"symbol"`
-			FundingRate      string `json:"fundingRate"`
+			Symbol              string `json:"symbol"`
+			FundingRate         string `json:"fundingRate"`
 			FundingRateInterval string `json:"fundingRateInterval"` // 单位：小时
-			NextUpdate       string `json:"nextUpdate"`             // 下次更新时间戳（毫秒）
-			MinFundingRate   string `json:"minFundingRate"`
-			MaxFundingRate   string `json:"maxFundingRate"`
+			NextUpdate          string `json:"nextUpdate"`          // 下次更新时间戳（毫秒）
 		} `json:"data"`
 	}
 
@@ -188,13 +184,6 @@ func (b *BitgetExchange) FetchFundingRates() (map[string]*ContractData, error) {
 		}
 
 		price := parseFloat(item.LastPr)
-		if price <= 0 {
-			price = parseFloat(item.MarkPrice)
-		}
-		if price <= 0 {
-			price = parseFloat(item.IndexPrice)
-		}
-		
 		if price <= 0 {
 			continue
 		}
